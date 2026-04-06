@@ -2,12 +2,6 @@
 
 Async Python client for the GramSnap Instagram viewer API.
 
-## Requirements
-
-```
-pip install curl-cffi fake-useragent
-```
-
 ## Usage
 
 ```python
@@ -41,3 +35,7 @@ asyncio.run(main())
 | `video_views` | `int \| None` | View count (videos only) |
 | `children` | `list[Media]` | Child media (sidecars only) |
 | `url` | `str` | Instagram post URL (property) |
+
+## Disclaimer
+
+This project is an unofficial client and all copyrights belong to **GramSnap**. This repository will be taken down immediately upon request from the GramSnap team. If you are a representative of GramSnap and wish to have this repository removed, please open an issue or contact the maintainer directly.
