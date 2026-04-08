@@ -6,16 +6,33 @@ Async Python client for the GramSnap Instagram viewer API.
 
 ```python
 import asyncio
-from gramsnap import GramSnap, MediaType
+from gramnsap import GramSnap, ErrorWhenFetchingPosts
 
 async def main():
     async with GramSnap() as gs:
-        posts = await gs.posts("username")
-        for p in posts:
+        try:
+            result = await gs.posts("username", retry=3)  # default: 3, use -1 for infinite retry
+        except ErrorWhenFetchingPosts as e:
+            print(f"Failed to fetch posts, collected {len(e.posts)} posts")
+            return
+
+        for p in result:
             print(f"[{p.typename.name}] {p.url} likes={p.likes}")
 
 asyncio.run(main())
 ```
+
+## Retry behavior
+
+The `retry` parameter on `posts()` controls how many times a failed request (HTTP 502) is retried:
+
+| Value | Behavior |
+|-------|----------|
+| `retry=3` (default) | Retry up to 3 times per page, raise `ErrorWhenFetchingPosts` on failure |
+| `retry=-1` | Retry indefinitely until success |
+| `retry=0` | No retries, raise immediately on 502 |
+
+`ErrorWhenFetchingPosts` contains `.posts` (successfully collected posts before failure).
 
 ## Output fields
 

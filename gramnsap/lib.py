@@ -8,6 +8,12 @@ import time
 import asyncio
 
 
+class ErrorWhenFetchingPosts(Exception):
+    def __init__(self, posts: list["Output"]):
+        self.posts = posts
+        super().__init__(f"Failed to fetch posts (collected {len(posts)} before failure)")
+
+
 class MediaType(Enum):
     IMAGE = auto()
     VIDEO = auto()
@@ -68,6 +74,17 @@ class Media:
             height=d.get("original_height", img.get("height", 0)),
             video_url=vid.get("url"),
         )
+
+
+@dataclass
+class PostsResult:
+    posts: list["Output"]
+
+    def __iter__(self):
+        return iter(self.posts)
+
+    def __len__(self):
+        return len(self.posts)
 
 
 @dataclass
@@ -173,13 +190,27 @@ class GramSnap:
         _s = hashlib.sha256(raw.encode()).hexdigest()
         return {**body, "ts": ts, "_ts": self._TS, "_tsc": self._TSC, "_s": _s}
 
-    async def __posts_v2(self, username: str) -> list[Output] | None:
+    _RETRY_DELAY = 2
+
+    async def __request(self, url: str, body: dict, retry: int):
+        attempt = 0
+        while True:
+            resp = await self.session.post(url, json=self.__sign(body))
+            if resp.status_code == 502 and (retry == -1 or attempt < retry):
+                attempt += 1
+                await asyncio.sleep(self._RETRY_DELAY)
+                continue
+            return resp
+
+    async def __posts_v2(self, username: str, retry: int) -> list[Output] | None:
         posts, max_id = [], ""
         while True:
-            resp = await self.session.post(
+            resp = await self.__request(
                 "https://gramsnap.com/api/v1/instagram/postsV2",
-                json=self.__sign({"username": username, "maxId": max_id}),
+                {"username": username, "maxId": max_id}, retry,
             )
+            if resp.status_code == 502:
+                raise ErrorWhenFetchingPosts(posts)
             resp.raise_for_status()
             data = resp.json() or {}
             if data.get("success") is False:
@@ -194,13 +225,15 @@ class GramSnap:
             max_id = result["page_info"]["end_cursor"]
         return posts
 
-    async def __posts_v1(self, username: str) -> list[Output]:
+    async def __posts_v1(self, username: str, retry: int) -> list[Output]:
         posts, max_id = [], ""
         while True:
-            resp = await self.session.post(
+            resp = await self.__request(
                 "https://gramsnap.com/api/v1/instagram/posts",
-                json=self.__sign({"username": username, "maxId": max_id}),
+                {"username": username, "maxId": max_id}, retry,
             )
+            if resp.status_code == 502:
+                raise ErrorWhenFetchingPosts(posts)
             resp.raise_for_status()
             result = (resp.json() or {}).get("result", {}) or {}
             edges = result.get("edges", [])
@@ -212,8 +245,12 @@ class GramSnap:
             max_id = result["page_info"]["end_cursor"]
         return posts
 
-    async def posts(self, username: str) -> list[Output]:
-        return await self.__posts_v2(username) or await self.__posts_v1(username)
+    async def posts(self, username: str, retry: int = 3) -> PostsResult:
+        v2 = await self.__posts_v2(username, retry)
+        if v2 is not None and v2:
+            return PostsResult(posts=v2)
+        v1 = await self.__posts_v1(username, retry)
+        return PostsResult(posts=v1)
     
 async def main():
     async with GramSnap() as gramsnap:

@@ -1,14 +1,16 @@
 import asyncio
-from gramsnap import GramSnap, MediaType
+from gramnsap import GramSnap, ErrorWhenFetchingPosts
 
 async def main():
     async with GramSnap() as gs:
-        posts = await gs.posts("ksmartboi")
+        try:
+            result = await gs.posts("yena.jigumina")
+        except ErrorWhenFetchingPosts as e:
+            print(f"Failed to fetch posts, collected {len(e.posts)} posts before failure")
+            return
 
-        print(f"Total posts: {len(posts)}")
-        print("=" * 60)
-
-        for i, p in enumerate(posts, 1):
+        print(f"Total posts: {len(result)}")
+        for i, p in enumerate(result, 1):
             print(f"Post #{i}")
             print(f"  Type     : {p.typename.name}")
             print(f"  URL      : {p.url}")
