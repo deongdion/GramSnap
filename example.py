@@ -4,7 +4,7 @@ from gramnsap import GramSnap, ErrorWhenFetchingPosts
 async def main():
     async with GramSnap() as gs:
         try:
-            result = await gs.posts("yena.jigumina")
+            result = await gs.posts("westwood.mp3")
         except ErrorWhenFetchingPosts as e:
             print(f"Failed to fetch posts, collected {len(e.posts)} posts before failure")
             return
