@@ -22,6 +22,46 @@ async def main():
 asyncio.run(main())
 ```
 
+## How it works
+
+Entering the context manager syncs the local clock against the server before any
+request is signed. `posts()` then walks the v2 endpoint page by page, falling back
+to v1 if v2 reports no result:
+
+```mermaid
+flowchart TD
+    START["async with GramSnap()"] --> SYNC["_sync_time<br/>GET gramsnap.com/msec"]
+    SYNC --> OFFSET["_tsc = local_ms - server_ms<br/>clock offset kept for signing"]
+    OFFSET --> CALL["await gs.posts(username, retry=3)"]
+
+    CALL --> V2["POST /api/v1/instagram/postsV2"]
+    V2 --> OK2{"success and edges?"}
+    OK2 -->|no| V1["POST /api/v1/instagram/posts"]
+    OK2 -->|yes| NEXT2{"has_next_page?"}
+    NEXT2 -->|"yes, maxId = end_cursor"| V2
+    NEXT2 -->|no| RESULT["PostsResult"]
+
+    V1 --> NEXT1{"has_next_page?"}
+    NEXT1 -->|"yes, maxId = end_cursor"| V1
+    NEXT1 -->|no| RESULT
+```
+
+Pagination is a cursor chain: each request needs the previous response's
+`end_cursor`, so pages of a single account cannot be fetched in parallel.
+
+Every request is signed and retried on 502:
+
+```mermaid
+flowchart LR
+    BODY["body = username + maxId"] --> SIGN["sha256(json + ts + _SECRET)"]
+    SIGN --> POST["POST with _s, ts, _ts, _tsc"]
+    POST --> CHECK{"502?"}
+    CHECK -->|no| PARSE["edges -> Output"]
+    CHECK -->|"yes, retries left"| WAIT["sleep _RETRY_DELAY"]
+    WAIT --> POST
+    CHECK -->|"yes, exhausted"| ERR["raise ErrorWhenFetchingPosts"]
+```
+
 ## Retry behavior
 
 The `retry` parameter on `posts()` controls how many times a failed request (HTTP 502) is retried:
@@ -52,6 +92,41 @@ The `retry` parameter on `posts()` controls how many times a failed request (HTT
 | `video_views` | `int \| None` | View count (videos only) |
 | `children` | `list[Media]` | Child media (sidecars only) |
 | `url` | `str` | Instagram post URL (property) |
+
+## Media types
+
+`SIDECAR` is Instagram's name for a carousel post — several photos or videos
+swiped through inside a single post.
+
+| `MediaType` | v2 `__typename` | v1 `media_type` | Meaning |
+|-------------|-----------------|-----------------|---------|
+| `IMAGE` | `GraphImage` | `1` | Single photo |
+| `VIDEO` | `GraphVideo` | `2` | Single video |
+| `SIDECAR` | `GraphSidecar` | `8` | Carousel of several items |
+
+```mermaid
+flowchart LR
+    P["Output"] --> T{"typename"}
+    T -->|IMAGE| I["display_url<br/>children = []"]
+    T -->|VIDEO| V["video_url<br/>children = []"]
+    T -->|SIDECAR| S["display_url = first item thumbnail<br/>children = list of Media"]
+    S --> C1["Media - is_video False"]
+    S --> C2["Media - is_video True"]
+```
+
+Only `SIDECAR` posts populate `children`. A carousel's own `is_video` is always
+`False` even when it contains videos, so filtering on `is_video` alone silently
+skips them — walk `children` as well:
+
+```python
+for p in result:
+    if p.typename == MediaType.VIDEO:
+        print(p.video_url)
+    elif p.typename == MediaType.SIDECAR:
+        for c in p.children:
+            if c.is_video:
+                print(c.video_url)
+```
 
 ## Disclaimer
 
